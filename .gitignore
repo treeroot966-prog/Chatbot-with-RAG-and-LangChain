@@ -1,4 +1,20 @@
+# Secret API keys
 .env
-venv
-__pycache__/
+
+# ChromaDB (large database files)
 chroma_db/
+
+# PDF data files (optional, can be heavy)
+data/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Mac system files
+.DS_Store
+
+# Virtual environment
+venv/
+env/

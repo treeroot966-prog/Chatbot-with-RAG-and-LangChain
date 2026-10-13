@@ -1,77 +1,92 @@
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
 import gradio as gr
-
-# import the .env file
 from dotenv import load_dotenv
+import os
+
+# Load API key from .env file
 load_dotenv()
 
-# configuration
+# Configuration
 DATA_PATH = r"data"
 CHROMA_PATH = r"chroma_db"
 
-embeddings_model = OpenAIEmbeddings(model="text-embedding-3-large")
+# Free Local Embedding Model (No API key needed)
+embeddings_model = HuggingFaceEmbeddings(
+    model_name="all-MiniLM-L6-v2"
+)
 
-# initiate the model
-llm = ChatOpenAI(temperature=0.5, model='gpt-4o-mini')
+# Free Groq LLM
+llm = ChatGroq(
+    model="qwen/qwen3.8-27b",
+    temperature=0.5,
+    api_key=os.getenv("GROQ_API_KEY")
+)
 
-# connect to the chromadb
+# Connect to ChromaDB
 vector_store = Chroma(
     collection_name="example_collection",
     embedding_function=embeddings_model,
-    persist_directory=CHROMA_PATH, 
+    persist_directory=CHROMA_PATH,
 )
 
-# Set up the vectorstore to be the retriever
+# Set up retriever
 num_results = 5
-retriever = vector_store.as_retriever(search_kwargs={'k': num_results})
+retriever = vector_store.as_retriever(
+    search_kwargs={"k": num_results}
+)
 
-# call this function for every message added to the chatbot
+
 def stream_response(message, history):
-    #print(f"Input: {message}. History: {history}\n")
-
-    # retrieve the relevant chunks based on the question asked
+    # Retrieve relevant chunks
     docs = retriever.invoke(message)
 
-    # add all the chunks to 'knowledge'
-    knowledge = ""
+    # Combine chunks into knowledge
+    knowledge = "\n\n".join(doc.page_content for doc in docs)
 
-    for doc in docs:
-        knowledge += doc.page_content+"\n\n"
+    # Format conversation history
+    history_text = "\n".join(
+        [f"User: {h[0]}\nAssistant: {h[1]}" for h in history]
+    )
+
+    # Build RAG prompt
+    rag_prompt = f"""
+You are an assistant which answers questions based on knowledge provided to you.
+While answering, you don't use your internal knowledge,
+but solely the information in the "Knowledge" section.
+You don't mention anything to the user about the provided knowledge.
+If the answer is not in the knowledge, say:
+"I couldn't find that information in the provided documents."
+
+Question:
+{message}
+
+Conversation History:
+{history_text}
+
+Knowledge:
+{knowledge}
+"""
+
+    print(rag_prompt)
+
+    # Stream response
+    partial_message = ""
+    for response in llm.stream(rag_prompt):
+        partial_message += response.content
+        yield partial_message
 
 
-    # make the call to the LLM (including prompt)
-    if message is not None:
-
-        partial_message = ""
-
-        rag_prompt = f"""
-        You are an assistent which answers questions based on knowledge which is provided to you.
-        While answering, you don't use your internal knowledge, 
-        but solely the information in the "The knowledge" section.
-        You don't mention anything to the user about the povided knowledge.
-
-        The question: {message}
-
-        Conversation history: {history}
-
-        The knowledge: {knowledge}
-
-        """
-
-        print(rag_prompt)
-
-        # stream the response to the Gradio App
-        for response in llm.stream(rag_prompt):
-            partial_message += response.content
-            yield partial_message
-
-# initiate the Gradio app
-chatbot = gr.ChatInterface(stream_response, textbox=gr.Textbox(placeholder="Send to the LLM...",
-    container=False,
-    autoscroll=True,
-    scale=7),
+# Gradio UI
+chatbot = gr.ChatInterface(
+    fn=stream_response,
+    textbox=gr.Textbox(
+        placeholder="Ask about the document...",
+        container=False,
+        autoscroll=True,
+        scale=7
+    ),
 )
 
-# launch the Gradio app
 chatbot.launch()
